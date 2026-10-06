@@ -13,3 +13,4 @@ wheels/
 ig_session.json
 .sessionid
 .env
+*.txt
