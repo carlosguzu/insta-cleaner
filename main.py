@@ -223,6 +223,48 @@ def parse_arguments():
     return parser.parse_args()
 
 
+TO_UNFOLLOW_FILE = Path("to_unfollow.txt")
+
+
+def load_pending_unfollows(cl: Client) -> list[tuple[int, str]]:
+    """Carga los objetivos pendientes desde to_unfollow.txt (o candidates_to_unfollow.txt)."""
+    target_file = TO_UNFOLLOW_FILE if TO_UNFOLLOW_FILE.exists() else CANDIDATES_FILE
+    if not target_file.exists():
+        print(f"[-] No se encontró archivo de objetivos ({target_file.name}). Ejecuta primero la auditoría.")
+        return []
+
+    target_usernames = set()
+    for line in target_file.read_text(encoding="utf-8").splitlines():
+        uname = line.split()[0].replace("@", "").strip()
+        if uname:
+            target_usernames.add(uname)
+
+    # Excluir privadas por seguridad
+    if EXEMPT_PRIVATE_FILE.exists():
+        privates = set(EXEMPT_PRIVATE_FILE.read_text(encoding="utf-8").splitlines())
+        target_usernames -= privates
+
+    # Excluir las ya dadas de baja
+    already_unfollowed = set()
+    if UNFOLLOWED_LOG_FILE.exists():
+        already_unfollowed = set(UNFOLLOWED_LOG_FILE.read_text(encoding="utf-8").splitlines())
+    target_usernames -= already_unfollowed
+
+    print(f"\n[*] Objetivos en lista pendientes por procesar: {len(target_usernames)}")
+    print("[*] Verificando con tu lista actual de seguidos en Instagram...")
+    following = cl.user_following(cl.user_id)
+    username_to_pk = {user.username.lower(): user.pk for user in following.values()}
+
+    final_targets = []
+    for uname in sorted(target_usernames):
+        pk = username_to_pk.get(uname.lower())
+        if pk:
+            final_targets.append((pk, uname))
+
+    print(f"[+] Total verificados que aún sigues activamente: {len(final_targets)}")
+    return final_targets
+
+
 def main():
     args = parse_arguments()
 
@@ -234,7 +276,7 @@ def main():
         print("[+] Sesión reiniciada. Ahora puedes ingresar una nueva cuenta.")
 
     if args.clear_cache:
-        to_delete = [EXEMPT_PRIVATE_FILE, CANDIDATES_FILE, Path("exempt_over_2k.txt")]
+        to_delete = [EXEMPT_PRIVATE_FILE, CANDIDATES_FILE, TO_UNFOLLOW_FILE, Path("exempt_over_2k.txt")]
         to_delete.extend(Path(".").glob("exempt_over_*.txt"))
         for f in set(to_delete):
             if f.exists():
@@ -244,7 +286,18 @@ def main():
 
     cl = get_client()
 
-    # Determinar el umbral de seguidores
+    # Si se pasa --execute, ejecutar directamente usando los archivos ya generados
+    if args.execute:
+        targets = load_pending_unfollows(cl)
+        if not targets:
+            print("[+] ¡No hay cuentas pendientes por dar de baja!")
+            return
+
+        print(f"\n[*] Ejecutando lote de bajas (máximo {args.limit} para esta sesión)...")
+        execute_unfollows(cl, targets, limit=args.limit)
+        return
+
+    # Si no es --execute, corre el modo auditoría
     if args.min_followers is not None:
         min_followers = args.min_followers
     else:
@@ -269,15 +322,10 @@ def main():
     print(f"Exentos por ser cuenta privada      : {len(exempt_private)} (guardado en {EXEMPT_PRIVATE_FILE.resolve()})")
     print(f"Candidatos para dejar de seguir     : {len(candidates)} (guardado en {CANDIDATES_FILE.resolve()})")
     print("=" * 50)
-
-    if not args.execute:
-        print("\n[MODO SIMULACIÓN / DRY-RUN]")
-        print("No se ha ejecutado ningún unfollow.")
-        print("Para ejecutar bajas reales de forma segura, ejecuta con el flag --execute:")
-        print("  uv run main.py --execute")
-        return
-
-    execute_unfollows(cl, candidates, limit=args.limit)
+    print("\n[MODO SIMULACIÓN / DRY-RUN]")
+    print("No se ha ejecutado ningún unfollow.")
+    print("Para ejecutar bajas reales en lotes diarios, usa:")
+    print("  uv run main.py --execute --limit 180")
 
 
 if __name__ == "__main__":
