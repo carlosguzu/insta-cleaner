@@ -1,57 +1,57 @@
 # Instagram Following Cleaner
 
-Herramienta en Python para auditar y limpiar la lista de seguidos en Instagram respetando excepciones y límites de tasa (rate limits).
+A Python CLI tool to safely audit and clean your Instagram following list while respecting custom exemptions and rate limits.
 
-## Seguridad y Autenticación
-El script **no requiere ni almacena tu contraseña**. Se autentica exclusivamente a través de la cookie de sesión existente (`sessionid`) de tu navegador web habitual:
-1. Abre Instagram en tu navegador.
-2. Abre las herramientas de desarrollador (`F12` -> `Almacenamiento`/`Storage` o `Aplicación`/`Application` -> `Cookies` -> `https://www.instagram.com`).
-3. Copia el valor de la cookie llamada `sessionid`.
+## Security & Authentication
+The script **never asks for or stores your password**. It authenticates exclusively via an existing session cookie (`sessionid`) from your regular web browser:
+1. Open Instagram in your web browser.
+2. Open Developer Tools (`F12` -> `Storage` / `Application` -> `Cookies` -> `https://www.instagram.com`).
+3. Copy the value of the cookie named `sessionid`.
 
-Puedes proporcionarla de tres formas:
-- **Interactivamente:** El script la solicitará con entrada oculta (no se muestra en pantalla).
-- **Archivo local seguro:** Guardándola en `.sessionid` dentro del proyecto (ignorado por Git).
-- **Variable de entorno:** `export IG_SESSIONID="<sessionid>"`
+You can provide it in three ways:
+- **Interactively:** The script will prompt for it with masked input (characters will not appear on screen).
+- **Secure local file:** Save it inside `.sessionid` in the project root (ignored by Git).
+- **Environment variable:** `export IG_SESSIONID="<sessionid>"`
 
-Una vez validada, la sesión se persiste localmente en `ig_session.json` (también ignorado en Git) para no pedirla de nuevo mientras sea válida.
+Once validated, the session settings are cached locally in `ig_session.json` (also ignored by Git) so you won't need to re-enter it on subsequent runs as long as the session remains valid.
 
-## Reglas de filtrado
-1. Identifica cuentas que **no te siguen de vuelta**.
-2. **Excepciones conservadas (no se dejan de seguir):**
-   - Cuentas que superan el umbral de seguidores configurado (por defecto: 2.000 seguidores, guardadas en `exempt_over_<umbral>.txt`).
-   - Cuentas privadas (guardadas en `exempt_private.txt`).
-3. El resto de perfiles se marcan como candidatos (`candidates_to_unfollow.txt`).
+## Filtering Rules
+1. Identifies accounts that **do not follow you back**.
+2. **Exemptions preserved (will NOT be unfollowed):**
+   - Accounts exceeding the configured follower threshold (defaults to 2,000 followers, saved to `exempt_over_<threshold>.txt`).
+   - Private accounts (saved to `exempt_private.txt`).
+3. The remaining accounts are flagged as candidates for unfollowing (`candidates_to_unfollow.txt`).
 
-## Uso con `uv`
+## Usage with `uv`
 
-### 1. Auditoría / Simulación (Dry-Run por defecto)
-Analiza y genera las listas sin realizar ninguna acción destructiva:
+### 1. Audit / Simulation (Dry-Run by default)
+Scans and populates report files without taking any destructive actions:
 ```bash
 cd /home/carlosg/Projects/instagram-cleaner
 uv run main.py
 ```
-*Al iniciar, puedes presionar `Enter` para usar el umbral predeterminado de 2.000 seguidores, o ingresar cualquier número.*
+*When prompted, press `Enter` to keep the default threshold of 2,000 followers, or enter any custom number.*
 
-También puedes pasar el parámetro directamente:
+You can also pass the parameter directly:
 ```bash
 uv run main.py --min-followers 5000
 ```
 
-### 2. Ejecutar bajas reales
-Aplica el flag `--execute` y opcionalmente define un `--limit` por sesión (recomendado máximo 50-70 por día para evitar suspensiones):
+### 2. Execute Real Unfollows
+Add the `--execute` flag and optionally specify a `--limit` per session (50–70 per day is recommended to prevent Instagram action blocks):
 ```bash
 uv run main.py --execute --limit 50
 ```
 
-## Opciones CLI
-- `--min-followers <N>`: Umbral de seguidores para eximir cuentas.
-- `--execute`: Ejecuta unfollows reales (por defecto es simulación).
-- `--limit <N>`: Límite de unfollows por ejecución (por defecto: 50).
-- `--reset-session`: Borra la sesión guardada para cambiar de cuenta.
-- `--clear-cache`: Borra los reportes `.txt` anteriores para reiniciar desde cero.
+## CLI Options
+- `--min-followers <N>`: Follower threshold to exempt accounts from unfollowing.
+- `--execute`: Execute actual unfollows (runs in simulation mode by default).
+- `--limit <N>`: Maximum unfollows per run (default: 50).
+- `--reset-session`: Delete cached session to switch accounts.
+- `--clear-cache`: Remove previous `.txt` reports to restart analysis from scratch.
 
-## Archivos de salida
-- `exempt_over_<umbral>.txt`: Lista de perfiles con más seguidores que el umbral.
-- `exempt_private.txt`: Lista de perfiles privados conservados.
-- `candidates_to_unfollow.txt`: Lista de cuentas que no te siguen y no cumplen las excepciones.
-- `unfollowed.txt`: Registro acumulativo de cuentas dadas de baja.
+## Generated Output Files
+- `exempt_over_<threshold>.txt`: Accounts you follow with follower count above the threshold.
+- `exempt_private.txt`: Private accounts you follow that don't follow back.
+- `candidates_to_unfollow.txt`: Accounts eligible to be unfollowed.
+- `unfollowed.txt`: Cumulative log of accounts unfollowed across runs.
