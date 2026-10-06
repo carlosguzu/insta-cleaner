@@ -18,8 +18,8 @@ Una vez validada, la sesión se persiste localmente en `ig_session.json` (tambi�
 ## Reglas de filtrado
 1. Identifica cuentas que **no te siguen de vuelta**.
 2. **Excepciones conservadas (no se dejan de seguir):**
-   - Cuentas con más de 2.000 seguidores (se guardan en `exempt_over_2k.txt`).
-   - Cuentas privadas (se guardan en `exempt_private.txt`).
+   - Cuentas que superan el umbral de seguidores configurado (por defecto: 2.000 seguidores, guardadas en `exempt_over_<umbral>.txt`).
+   - Cuentas privadas (guardadas en `exempt_private.txt`).
 3. El resto de perfiles se marcan como candidatos (`candidates_to_unfollow.txt`).
 
 ## Uso con `uv`
@@ -30,6 +30,12 @@ Analiza y genera las listas sin realizar ninguna acción destructiva:
 cd /home/carlosg/Projects/instagram-cleaner
 uv run main.py
 ```
+*Al iniciar, puedes presionar `Enter` para usar el umbral predeterminado de 2.000 seguidores, o ingresar cualquier número.*
+
+También puedes pasar el parámetro directamente:
+```bash
+uv run main.py --min-followers 5000
+```
 
 ### 2. Ejecutar bajas reales
 Aplica el flag `--execute` y opcionalmente define un `--limit` por sesión (recomendado máximo 50-70 por día para evitar suspensiones):
@@ -37,8 +43,15 @@ Aplica el flag `--execute` y opcionalmente define un `--limit` por sesión (reco
 uv run main.py --execute --limit 50
 ```
 
+## Opciones CLI
+- `--min-followers <N>`: Umbral de seguidores para eximir cuentas.
+- `--execute`: Ejecuta unfollows reales (por defecto es simulación).
+- `--limit <N>`: Límite de unfollows por ejecución (por defecto: 50).
+- `--reset-session`: Borra la sesión guardada para cambiar de cuenta.
+- `--clear-cache`: Borra los reportes `.txt` anteriores para reiniciar desde cero.
+
 ## Archivos de salida
-- `exempt_over_2k.txt`: Lista de perfiles con > 2.000 seguidores.
+- `exempt_over_<umbral>.txt`: Lista de perfiles con más seguidores que el umbral.
 - `exempt_private.txt`: Lista de perfiles privados conservados.
 - `candidates_to_unfollow.txt`: Lista de cuentas que no te siguen y no cumplen las excepciones.
 - `unfollowed.txt`: Registro acumulativo de cuentas dadas de baja.

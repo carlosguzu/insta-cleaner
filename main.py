@@ -9,10 +9,15 @@ from pathlib import Path
 from instagrapi import Client
 
 SESSION_FILE = Path("ig_session.json")
-EXEMPT_OVER_2K_FILE = Path("exempt_over_2k.txt")
 EXEMPT_PRIVATE_FILE = Path("exempt_private.txt")
 CANDIDATES_FILE = Path("candidates_to_unfollow.txt")
 UNFOLLOWED_LOG_FILE = Path("unfollowed.txt")
+
+
+def get_exempt_followers_file(min_followers: int) -> Path:
+    if min_followers == 2000 and Path("exempt_over_2k.txt").exists():
+        return Path("exempt_over_2k.txt")
+    return Path(f"exempt_over_{min_followers}.txt")
 
 
 def get_client(session_file: Path = SESSION_FILE) -> Client:
@@ -62,6 +67,7 @@ def get_client(session_file: Path = SESSION_FILE) -> Client:
 
 def analyze_relationships(
     cl: Client,
+    min_followers: int = 2000,
     sleep_range: tuple[float, float] = (2.0, 4.0),
 ) -> tuple[list[str], list[str], list[tuple[int, str]]]:
     user_id = cl.user_id
@@ -78,7 +84,8 @@ def analyze_relationships(
     not_following_back = [u for uid, u in following.items() if uid not in follower_ids]
     print(f"[!] Cuentas que no te siguen de vuelta: {len(not_following_back)}")
 
-    exempt_over_2k: list[str] = []
+    exempt_over_file = get_exempt_followers_file(min_followers)
+    exempt_over_min: list[str] = []
     exempt_private: list[str] = []
     to_unfollow: list[tuple[int, str]] = []
 
@@ -86,23 +93,24 @@ def analyze_relationships(
     processed_candidates = set()
     if CANDIDATES_FILE.exists():
         processed_candidates = set(CANDIDATES_FILE.read_text(encoding="utf-8").splitlines())
-    processed_over_2k = set()
-    if EXEMPT_OVER_2K_FILE.exists():
-        for line in EXEMPT_OVER_2K_FILE.read_text(encoding="utf-8").splitlines():
-            if line:
-                processed_over_2k.add(line.split()[0].replace("@", ""))
+    processed_over_min = set()
+    for potential_file in [exempt_over_file, Path("exempt_over_2k.txt")]:
+        if potential_file.exists():
+            for line in potential_file.read_text(encoding="utf-8").splitlines():
+                if line:
+                    processed_over_min.add(line.split()[0].replace("@", ""))
     processed_private = set()
     if EXEMPT_PRIVATE_FILE.exists():
         processed_private = set(EXEMPT_PRIVATE_FILE.read_text(encoding="utf-8").splitlines())
 
-    already_processed = processed_candidates | processed_over_2k | processed_private
+    already_processed = processed_candidates | processed_over_min | processed_private
 
     # Abrir archivos en modo append con autoflush para guardar en tiempo real
-    f_2k = EXEMPT_OVER_2K_FILE.open("a", encoding="utf-8")
+    f_over = exempt_over_file.open("a", encoding="utf-8")
     f_priv = EXEMPT_PRIVATE_FILE.open("a", encoding="utf-8")
     f_cand = CANDIDATES_FILE.open("a", encoding="utf-8")
 
-    print("\n[*] Inspeccionando perfiles para filtrar excepciones...")
+    print(f"\n[*] Inspeccionando perfiles para filtrar excepciones (umbral: >{min_followers} seguidores)...")
     total = len(not_following_back)
     try:
         for idx, user_short in enumerate(not_following_back, start=1):
@@ -119,11 +127,11 @@ def analyze_relationships(
 
                 status_str = f"Seguidores: {follower_count:>6} | Privada: {str(is_private):<5}"
 
-                if follower_count > 2000:
-                    exempt_over_2k.append(f"{username} ({follower_count} seguidores)")
-                    f_2k.write(f"{username} ({follower_count} seguidores)\n")
-                    f_2k.flush()
-                    print(f"[{idx:4d}/{total:4d}] @{username:<25} {status_str} -> EXENTO (>2k)")
+                if follower_count > min_followers:
+                    exempt_over_min.append(f"{username} ({follower_count} seguidores)")
+                    f_over.write(f"{username} ({follower_count} seguidores)\n")
+                    f_over.flush()
+                    print(f"[{idx:4d}/{total:4d}] @{username:<25} {status_str} -> EXENTO (>{min_followers})")
                 elif is_private:
                     exempt_private.append(username)
                     f_priv.write(f"{username}\n")
@@ -140,11 +148,11 @@ def analyze_relationships(
                 print(f"[{idx:4d}/{total:4d}] Error al inspeccionar @{user_short.username}: {err}")
                 time.sleep(10.0)
     finally:
-        f_2k.close()
+        f_over.close()
         f_priv.close()
         f_cand.close()
 
-    return exempt_over_2k, exempt_private, to_unfollow
+    return exempt_over_min, exempt_private, to_unfollow
 
 
 def execute_unfollows(
@@ -197,6 +205,12 @@ def parse_arguments():
         help="Límite máximo de unfollows por ejecución (por defecto: 50).",
     )
     parser.add_argument(
+        "--min-followers",
+        type=int,
+        default=None,
+        help="Umbral mínimo de seguidores para eximir una cuenta (por defecto: pregunta interactiva o 2000).",
+    )
+    parser.add_argument(
         "--reset-session",
         action="store_true",
         help="Elimina la sesión guardada y solicita una nueva cookie sessionid.",
@@ -220,7 +234,9 @@ def main():
         print("[+] Sesión reiniciada. Ahora puedes ingresar una nueva cuenta.")
 
     if args.clear_cache:
-        for f in [EXEMPT_OVER_2K_FILE, EXEMPT_PRIVATE_FILE, CANDIDATES_FILE]:
+        to_delete = [EXEMPT_PRIVATE_FILE, CANDIDATES_FILE, Path("exempt_over_2k.txt")]
+        to_delete.extend(Path(".").glob("exempt_over_*.txt"))
+        for f in set(to_delete):
             if f.exists():
                 f.unlink()
                 print(f"[*] Archivo borrado: {f.name}")
@@ -228,12 +244,28 @@ def main():
 
     cl = get_client()
 
-    exempt_over_2k, exempt_private, candidates = analyze_relationships(cl)
+    # Determinar el umbral de seguidores
+    if args.min_followers is not None:
+        min_followers = args.min_followers
+    else:
+        try:
+            raw = input("\nUmbral mínimo de seguidores para no dejar de seguir [Enter para 2000]: ").strip()
+            min_followers = int(raw) if raw.isdigit() else 2000
+        except (KeyboardInterrupt, EOFError):
+            print("\nCancelado por el usuario.")
+            sys.exit(0)
+
+    print(f"[*] Cuentas con más de {min_followers:,} seguidores serán eximidas.")
+
+    exempt_over_min, exempt_private, candidates = analyze_relationships(
+        cl, min_followers=min_followers
+    )
+    exempt_over_file = get_exempt_followers_file(min_followers)
 
     print("\n" + "=" * 50)
     print("RESUMEN DE AUDITORÍA")
     print("=" * 50)
-    print(f"Exentos con más de 2.000 seguidores : {len(exempt_over_2k)} (guardado en {EXEMPT_OVER_2K_FILE.resolve()})")
+    print(f"Exentos con más de {min_followers:,} seguidores : {len(exempt_over_min)} (guardado en {exempt_over_file.resolve()})")
     print(f"Exentos por ser cuenta privada      : {len(exempt_private)} (guardado en {EXEMPT_PRIVATE_FILE.resolve()})")
     print(f"Candidatos para dejar de seguir     : {len(candidates)} (guardado en {CANDIDATES_FILE.resolve()})")
     print("=" * 50)
