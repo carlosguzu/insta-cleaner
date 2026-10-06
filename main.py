@@ -265,6 +265,47 @@ def load_pending_unfollows(cl: Client) -> list[tuple[int, str]]:
     return final_targets
 
 
+def generate_final_report():
+    """Genera un reporte markdown en el $HOME del usuario cuando todo está al 100%."""
+    import datetime
+    import subprocess
+
+    report_file = Path.home() / "INSTAGRAM_CLEANUP_REPORT.md"
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    total_unfollowed = 0
+    if UNFOLLOWED_LOG_FILE.exists():
+        total_unfollowed = len(UNFOLLOWED_LOG_FILE.read_text(encoding="utf-8").splitlines())
+
+    total_private = 0
+    if EXEMPT_PRIVATE_FILE.exists():
+        total_private = len(EXEMPT_PRIVATE_FILE.read_text(encoding="utf-8").splitlines())
+
+    content = f"""# Reporte de Limpieza de Instagram
+
+- **Fecha de finalización:** {now_str}
+- **Estado:** 100% Completado con éxito
+- **Total de cuentas dadas de baja:** {total_unfollowed}
+- **Cuentas privadas conservadas:** {total_private}
+
+Todos los objetivos de tu lista fueron procesados y dados de baja exitosamente.
+El temporizador de systemd ya puede ser desactivado con:
+```bash
+systemctl --user disable --now instagram-cleaner.timer
+```
+"""
+    report_file.write_text(content, encoding="utf-8")
+    print(f"\n[+] Reporte final generado en: {report_file.resolve()}")
+
+    try:
+        subprocess.run(
+            ["notify-send", "Instagram Cleaner", "¡Limpieza al 100% completada! Reporte generado en tu home."],
+            check=False,
+        )
+    except Exception:
+        pass
+
+
 def main():
     args = parse_arguments()
 
@@ -290,11 +331,18 @@ def main():
     if args.execute:
         targets = load_pending_unfollows(cl)
         if not targets:
-            print("[+] ¡No hay cuentas pendientes por dar de baja!")
+            print("[+] ¡No hay cuentas pendientes por dar de baja! Todo está al 100%.")
+            generate_final_report()
             return
 
         print(f"\n[*] Ejecutando lote de bajas (máximo {args.limit} para esta sesión)...")
         execute_unfollows(cl, targets, limit=args.limit)
+
+        # Comprobar si tras este lote ya no quedan pendientes
+        remaining = load_pending_unfollows(cl)
+        if not remaining:
+            print("[+] ¡Limpieza completada al 100%!")
+            generate_final_report()
         return
 
     # Si no es --execute, corre el modo auditoría
