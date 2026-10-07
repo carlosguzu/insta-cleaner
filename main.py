@@ -12,6 +12,8 @@ SESSION_FILE = Path("ig_session.json")
 EXEMPT_PRIVATE_FILE = Path("exempt_private.txt")
 CANDIDATES_FILE = Path("candidates_to_unfollow.txt")
 UNFOLLOWED_LOG_FILE = Path("unfollowed.txt")
+UNFOLLOWED_CSV_FILE = Path("unfollowed_history.csv")
+UNFOLLOWED_JSON_FILE = Path("unfollowed_history.json")
 
 
 def get_exempt_followers_file(min_followers: int) -> Path:
@@ -22,13 +24,17 @@ def get_exempt_followers_file(min_followers: int) -> Path:
 
 def get_client(session_file: Path = SESSION_FILE) -> Client:
     cl = Client()
+    cl.request_timeout = 20
 
     # 1. Intentar cargar sesión guardada previamente
     if session_file.exists():
         print(f"[*] Cargando sesión persistida desde: {session_file.resolve()}")
         try:
             cl.load_settings(session_file)
-            if cl.sessionid:
+            if cl.user_id:
+                print(f"[+] Sesión cargada exitosamente para ID: {cl.user_id}.")
+                return cl
+            elif cl.sessionid:
                 cl.login_by_sessionid(cl.sessionid)
                 print(f"[+] Sesión cargada exitosamente para @{cl.username} (ID: {cl.user_id}).")
                 return cl
@@ -164,6 +170,35 @@ def send_notification(title: str, message: str, urgency: str = "normal"):
         pass
 
 
+def record_unfollow(username: str, pk: int):
+    """Registra cada unfollow de forma inmediata en unfollowed.txt, CSV y JSON con timestamp."""
+    import datetime
+    import json
+
+    now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # 1. unfollowed.txt
+    with UNFOLLOWED_LOG_FILE.open("a", encoding="utf-8") as f:
+        f.write(f"{username}\n")
+
+    # 2. unfollowed_history.csv
+    csv_exists = UNFOLLOWED_CSV_FILE.exists()
+    with UNFOLLOWED_CSV_FILE.open("a", encoding="utf-8") as f:
+        if not csv_exists:
+            f.write("timestamp,username,user_id\n")
+        f.write(f'"{now_iso}","{username}",{pk}\n')
+
+    # 3. unfollowed_history.json
+    history = []
+    if UNFOLLOWED_JSON_FILE.exists():
+        try:
+            history = json.loads(UNFOLLOWED_JSON_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            history = []
+    history.append({"timestamp": now_iso, "username": username, "user_id": pk})
+    UNFOLLOWED_JSON_FILE.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def execute_unfollows(
     cl: Client,
     candidates: list[tuple[int, str]],
@@ -172,7 +207,6 @@ def execute_unfollows(
 ):
     print(f"\n[*] Iniciando proceso de unfollow (Límite para esta ejecución: {limit})...")
     count = 0
-    unfollowed_log = []
     error_occurred = False
     error_message = ""
 
@@ -192,7 +226,7 @@ def execute_unfollows(
         try:
             cl.user_unfollow(pk)
             count += 1
-            unfollowed_log.append(username)
+            record_unfollow(username, pk)
             print(f"[{count:2d}/{limit:2d}] Dejaste de seguir a @{username}")
 
             if count < limit:
@@ -204,10 +238,6 @@ def execute_unfollows(
             error_message = str(err)
             print(f"[-] Error al dejar de seguir a @{username}: {err}")
             break
-
-    if unfollowed_log:
-        with UNFOLLOWED_LOG_FILE.open("a", encoding="utf-8") as f:
-            f.write("\n".join(unfollowed_log) + "\n")
 
     print(f"\n[+] Total de cuentas dadas de baja en esta sesión: {count}")
 
@@ -339,6 +369,16 @@ systemctl --user disable --now instagram-cleaner.timer
         )
     except Exception:
         pass
+
+    # Auto-desactivar el temporizador para que no siga despertando en vano
+    try:
+        print("[*] Desactivando automáticamente instagram-cleaner.timer...")
+        subprocess.run(
+            ["systemctl", "--user", "disable", "--now", "instagram-cleaner.timer"],
+            check=False,
+        )
+    except Exception as e:
+        print(f"[!] No se pudo auto-desactivar el timer: {e}")
 
 
 def main():
