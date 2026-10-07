@@ -199,37 +199,76 @@ def record_unfollow(username: str, pk: int):
     UNFOLLOWED_JSON_FILE.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def get_unfollowed_today() -> int:
+    """Calcula cuántas cuentas se han dado de baja hoy consultando unfollowed_history.csv."""
+    import datetime
+    if not UNFOLLOWED_CSV_FILE.exists():
+        return 0
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    count = 0
+    try:
+        lines = UNFOLLOWED_CSV_FILE.read_text(encoding="utf-8").splitlines()
+        for line in lines[1:]:  # Omitir header
+            if line.startswith(f'"{today_str}'):
+                count += 1
+    except Exception:
+        pass
+    return count
+
+
 def execute_unfollows(
     cl: Client,
     candidates: list[tuple[int, str]],
-    limit: int = 50,
+    daily_quota: int = 180,
     sleep_range: tuple[float, float] = (30.0, 70.0),
 ):
-    print(f"\n[*] Iniciando proceso de unfollow (Límite para esta ejecución: {limit})...")
+    already_done_today = get_unfollowed_today()
+    remaining_quota = max(0, daily_quota - already_done_today)
+
+    print(f"\n[*] Meta diaria: {daily_quota} cuentas.")
+    print(f"[*] Ya completadas hoy: {already_done_today} cuentas.")
+    print(f"[*] Cuota restante a procesar en esta sesión: {remaining_quota} cuentas.")
+
+    if remaining_quota == 0:
+        print(f"[+] ¡La meta diaria de {daily_quota} cuentas ya se cumplió el día de hoy! Nada por hacer hasta mañana.")
+        send_notification(
+            "Instagram Cleaner: Cuota al día",
+            f"La meta diaria de {daily_quota} ya está cumplida hoy ({already_done_today} bajas realizadas).",
+        )
+        return
+
     count = 0
     error_occurred = False
     error_message = ""
 
-    # Notificación de inicio
     total_pendientes = len(candidates)
-    num_a_procesar = min(limit, total_pendientes)
-    send_notification(
-        "Instagram Cleaner: Iniciado",
-        f"Comenzando lote diario.\nObjetivos de hoy: {num_a_procesar} cuentas.\nPendientes totales: {total_pendientes}",
-    )
+    num_a_procesar = min(remaining_quota, total_pendientes)
+
+    # Notificación de inicio con información clara de reanudación
+    if already_done_today > 0:
+        send_notification(
+            "Instagram Cleaner: Reanudando Lote",
+            f"Reanudando tras reinicio.\nYa van {already_done_today}/{daily_quota} hoy.\nProcesando las {num_a_procesar} restantes.\nPendientes totales: {total_pendientes}",
+        )
+    else:
+        send_notification(
+            "Instagram Cleaner: Iniciado",
+            f"Comenzando lote diario.\nObjetivos de hoy: {num_a_procesar} cuentas.\nPendientes totales: {total_pendientes}",
+        )
 
     for pk, username in candidates:
-        if count >= limit:
-            print(f"[!] Límite de {limit} alcanzado para evitar bloqueos de Instagram.")
+        if count >= remaining_quota:
+            print(f"[!] Meta diaria de {daily_quota} alcanzada para hoy ({already_done_today + count} procesadas).")
             break
 
         try:
             cl.user_unfollow(pk)
             count += 1
             record_unfollow(username, pk)
-            print(f"[{count:2d}/{limit:2d}] Dejaste de seguir a @{username}")
+            total_hoy = already_done_today + count
+            print(f"[{count:2d}/{remaining_quota:2d}] (Hoy: {total_hoy}/{daily_quota}) Dejaste de seguir a @{username}")
 
-            if count < limit:
+            if count < remaining_quota:
                 wait_time = random.uniform(*sleep_range)
                 print(f"         Esperando {wait_time:.1f} segundos...")
                 time.sleep(wait_time)
@@ -239,20 +278,25 @@ def execute_unfollows(
             print(f"[-] Error al dejar de seguir a @{username}: {err}")
             break
 
-    print(f"\n[+] Total de cuentas dadas de baja en esta sesión: {count}")
+    total_hoy_final = already_done_today + count
+    print(f"\n[+] Sesión finalizada: {count} procesadas en esta sesión. Total hoy: {total_hoy_final}/{daily_quota}.")
 
-    # Notificación de resultado (éxito o fallback por error)
     pendientes_restantes = total_pendientes - count
     if error_occurred:
         send_notification(
             "Instagram Cleaner: Alerta / Fallback",
-            f"El lote se detuvo tras {count} bajas debido a un error:\n{error_message[:100]}\nQuedan {pendientes_restantes} pendientes.",
+            f"El lote se detuvo tras {total_hoy_final}/{daily_quota} hoy debido a un error:\n{error_message[:100]}\nQuedan {pendientes_restantes} pendientes en total.",
             urgency="critical",
+        )
+    elif total_hoy_final >= daily_quota or pendientes_restantes == 0:
+        send_notification(
+            "Instagram Cleaner: Meta Diaria Cumplida",
+            f"¡Meta de hoy cumplida al 100%! ({total_hoy_final}/{daily_quota} cuentas).\nQuedan {pendientes_restantes} pendientes en total.",
         )
     else:
         send_notification(
-            "Instagram Cleaner: Lote Completado",
-            f"Lote finalizado con éxito.\nSe dieron de baja {count} cuentas hoy.\nQuedan {pendientes_restantes} pendientes en total.",
+            "Instagram Cleaner: Sesión Detenida",
+            f"Se procesaron {total_hoy_final}/{daily_quota} cuentas hoy.\nQuedan {pendientes_restantes} pendientes.",
         )
 
 
