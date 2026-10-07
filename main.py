@@ -155,6 +155,15 @@ def analyze_relationships(
     return exempt_over_min, exempt_private, to_unfollow
 
 
+def send_notification(title: str, message: str, urgency: str = "normal"):
+    """Envía una notificación de escritorio en Wayland/Hyprland."""
+    try:
+        import subprocess
+        subprocess.run(["notify-send", "-u", urgency, title, message], check=False)
+    except Exception:
+        pass
+
+
 def execute_unfollows(
     cl: Client,
     candidates: list[tuple[int, str]],
@@ -164,6 +173,16 @@ def execute_unfollows(
     print(f"\n[*] Iniciando proceso de unfollow (Límite para esta ejecución: {limit})...")
     count = 0
     unfollowed_log = []
+    error_occurred = False
+    error_message = ""
+
+    # Notificación de inicio
+    total_pendientes = len(candidates)
+    num_a_procesar = min(limit, total_pendientes)
+    send_notification(
+        "Instagram Cleaner: Iniciado",
+        f"Comenzando lote diario.\nObjetivos de hoy: {num_a_procesar} cuentas.\nPendientes totales: {total_pendientes}",
+    )
 
     for pk, username in candidates:
         if count >= limit:
@@ -181,6 +200,8 @@ def execute_unfollows(
                 print(f"         Esperando {wait_time:.1f} segundos...")
                 time.sleep(wait_time)
         except Exception as err:
+            error_occurred = True
+            error_message = str(err)
             print(f"[-] Error al dejar de seguir a @{username}: {err}")
             break
 
@@ -189,6 +210,20 @@ def execute_unfollows(
             f.write("\n".join(unfollowed_log) + "\n")
 
     print(f"\n[+] Total de cuentas dadas de baja en esta sesión: {count}")
+
+    # Notificación de resultado (éxito o fallback por error)
+    pendientes_restantes = total_pendientes - count
+    if error_occurred:
+        send_notification(
+            "Instagram Cleaner: Alerta / Fallback",
+            f"El lote se detuvo tras {count} bajas debido a un error:\n{error_message[:100]}\nQuedan {pendientes_restantes} pendientes.",
+            urgency="critical",
+        )
+    else:
+        send_notification(
+            "Instagram Cleaner: Lote Completado",
+            f"Lote finalizado con éxito.\nSe dieron de baja {count} cuentas hoy.\nQuedan {pendientes_restantes} pendientes en total.",
+        )
 
 
 def parse_arguments():
