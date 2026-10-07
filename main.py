@@ -219,9 +219,10 @@ def get_unfollowed_today() -> int:
 def execute_unfollows(
     cl: Client,
     candidates: list[tuple[int, str]],
-    daily_quota: int = 180,
+    limit: int = 180,
     sleep_range: tuple[float, float] = (30.0, 70.0),
 ):
+    daily_quota = limit
     already_done_today = get_unfollowed_today()
     remaining_quota = max(0, daily_quota - already_done_today)
 
