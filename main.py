@@ -237,14 +237,20 @@ def execute_unfollows(
     candidates: list[tuple[int, str]],
     limit: int = 180,
     sleep_range: tuple[float, float] = (30.0, 70.0),
+    ignore_daily_quota: bool = False,
 ):
     daily_quota = limit
     already_done_today = get_unfollowed_today()
-    remaining_quota = max(0, daily_quota - already_done_today)
 
-    print(f"\n[*] Meta diaria: {daily_quota} cuentas.")
-    print(f"[*] Ya completadas hoy: {already_done_today} cuentas.")
-    print(f"[*] Cuota restante a procesar en esta sesión: {remaining_quota} cuentas.")
+    if ignore_daily_quota:
+        remaining_quota = limit
+        print(f"\n[*] Modo lote forzado: procesando {remaining_quota} cuentas en esta sesión.")
+        print(f"[*] Ya completadas hoy previamente: {already_done_today} cuentas.")
+    else:
+        remaining_quota = max(0, daily_quota - already_done_today)
+        print(f"\n[*] Meta diaria: {daily_quota} cuentas.")
+        print(f"[*] Ya completadas hoy: {already_done_today} cuentas.")
+        print(f"[*] Cuota restante a procesar en esta sesión: {remaining_quota} cuentas.")
 
     if remaining_quota == 0:
         print(f"[+] ¡La meta diaria de {daily_quota} cuentas ya se cumplió el día de hoy! Nada por hacer hasta mañana.")
@@ -262,7 +268,12 @@ def execute_unfollows(
     num_a_procesar = min(remaining_quota, total_pendientes)
 
     # Notificación de inicio con información clara de reanudación
-    if already_done_today > 0:
+    if ignore_daily_quota:
+        send_notification(
+            "Instagram Cleaner: Iniciado",
+            f"Comenzando lote manual de {num_a_procesar} cuentas.\n(Ya iban {already_done_today} hoy)\nPendientes totales: {total_pendientes}",
+        )
+    elif already_done_today > 0:
         send_notification(
             "Instagram Cleaner: Reanudando Lote",
             f"Reanudando tras reinicio.\nYa van {already_done_today}/{daily_quota} hoy.\nProcesando las {num_a_procesar} restantes.\nPendientes totales: {total_pendientes}",
@@ -275,7 +286,10 @@ def execute_unfollows(
 
     for pk, username in candidates:
         if count >= remaining_quota:
-            print(f"[!] Meta diaria de {daily_quota} alcanzada para hoy ({already_done_today + count} procesadas).")
+            if ignore_daily_quota:
+                print(f"[!] Lote de {remaining_quota} alcanzado para esta sesión ({already_done_today + count} procesadas hoy en total).")
+            else:
+                print(f"[!] Meta diaria de {daily_quota} alcanzada para hoy ({already_done_today + count} procesadas).")
             break
 
         try:
@@ -283,7 +297,8 @@ def execute_unfollows(
             count += 1
             record_unfollow(username, pk)
             total_hoy = already_done_today + count
-            print(f"[{count:2d}/{remaining_quota:2d}] (Hoy: {total_hoy}/{daily_quota}) Dejaste de seguir a @{username}")
+            target_desc = f"{remaining_quota}" if ignore_daily_quota else f"{daily_quota}"
+            print(f"[{count:2d}/{remaining_quota:2d}] (Hoy: {total_hoy}/{target_desc}) Dejaste de seguir a @{username}")
 
             if count < remaining_quota:
                 wait_time = random.uniform(*sleep_range)
@@ -296,24 +311,24 @@ def execute_unfollows(
             break
 
     total_hoy_final = already_done_today + count
-    print(f"\n[+] Sesión finalizada: {count} procesadas en esta sesión. Total hoy: {total_hoy_final}/{daily_quota}.")
+    print(f"\n[+] Sesión finalizada: {count} procesadas en esta sesión. Total hoy: {total_hoy_final}.")
 
     pendientes_restantes = total_pendientes - count
     if error_occurred:
         send_notification(
             "Instagram Cleaner: Alerta / Fallback",
-            f"El lote se detuvo tras {total_hoy_final}/{daily_quota} hoy debido a un error:\n{error_message[:100]}\nQuedan {pendientes_restantes} pendientes en total.",
+            f"El lote se detuvo tras {count} en esta sesión ({total_hoy_final} hoy) debido a un error:\n{error_message[:100]}\nQuedan {pendientes_restantes} pendientes en total.",
             urgency="critical",
         )
-    elif total_hoy_final >= daily_quota or pendientes_restantes == 0:
+    elif count >= remaining_quota or pendientes_restantes == 0:
         send_notification(
-            "Instagram Cleaner: Meta Diaria Cumplida",
-            f"¡Meta de hoy cumplida al 100%! ({total_hoy_final}/{daily_quota} cuentas).\nQuedan {pendientes_restantes} pendientes en total.",
+            "Instagram Cleaner: Lote Cumplido",
+            f"¡Lote de {count} cuentas cumplido al 100%! ({total_hoy_final} hoy en total).\nQuedan {pendientes_restantes} pendientes en total.",
         )
     else:
         send_notification(
             "Instagram Cleaner: Sesión Detenida",
-            f"Se procesaron {total_hoy_final}/{daily_quota} cuentas hoy.\nQuedan {pendientes_restantes} pendientes.",
+            f"Se procesaron {count} cuentas en esta sesión ({total_hoy_final} hoy).\nQuedan {pendientes_restantes} pendientes.",
         )
 
 
@@ -345,6 +360,11 @@ def parse_arguments():
         "--clear-cache",
         action="store_true",
         help="Borra los archivos de resultados (.txt) previos para reiniciar la clasificación desde cero.",
+    )
+    parser.add_argument(
+        "--ignore-daily-quota",
+        action="store_true",
+        help="Ignora la cuota diaria acumulada y ejecuta el límite completo indicado con --limit en esta sesión.",
     )
     return parser.parse_args()
 
@@ -472,7 +492,12 @@ def main():
             return
 
         print(f"\n[*] Ejecutando lote de bajas (máximo {args.limit} para esta sesión)...")
-        execute_unfollows(cl, targets, limit=args.limit)
+        execute_unfollows(
+            cl,
+            targets,
+            limit=args.limit,
+            ignore_daily_quota=args.ignore_daily_quota,
+        )
 
         # Comprobar si tras este lote ya no quedan pendientes
         remaining = load_pending_unfollows(cl)
