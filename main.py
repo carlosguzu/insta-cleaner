@@ -26,45 +26,61 @@ def get_client(session_file: Path = SESSION_FILE) -> Client:
     cl = Client()
     cl.request_timeout = 20
 
-    # 1. Intentar cargar sesión guardada previamente
+    session_file_txt = Path(".sessionid")
+    new_session_id = os.getenv("IG_SESSIONID")
+    if not new_session_id and session_file_txt.exists():
+        new_session_id = session_file_txt.read_text(encoding="utf-8").strip()
+
+    # 1. Si el usuario puso un nuevo sessionid explícito en .sessionid, usarlo y actualizar ig_session.json
+    if new_session_id:
+        # Si ya existe un ig_session.json, comprobar si el sessionid cambió
+        saved_sessionid = ""
+        if session_file.exists():
+            try:
+                import json
+                data = json.loads(session_file.read_text(encoding="utf-8"))
+                saved_sessionid = data.get("cookies", {}).get("sessionid", "")
+            except Exception:
+                pass
+
+        if new_session_id != saved_sessionid:
+            print("[*] Nuevo sessionid detectado en .sessionid. Actualizando sesión...")
+            try:
+                cl.login_by_sessionid(new_session_id)
+                cl.dump_settings(session_file)
+                print(f"[+] Autenticación exitosa como @{cl.username} (ID: {cl.user_id}).")
+                return cl
+            except Exception as err:
+                print(f"[!] Error con el nuevo sessionid: {err}")
+
+    # 2. Cargar sesión guardada previamente si existe
     if session_file.exists():
         print(f"[*] Cargando sesión persistida desde: {session_file.resolve()}")
         try:
             cl.load_settings(session_file)
             if cl.user_id:
-                print(f"[+] Sesión cargada exitosamente para ID: {cl.user_id}.")
-                return cl
-            elif cl.sessionid:
-                cl.login_by_sessionid(cl.sessionid)
-                print(f"[+] Sesión cargada exitosamente para @{cl.username} (ID: {cl.user_id}).")
+                print(f"[+] Sesión cargada para ID: {cl.user_id}.")
                 return cl
         except Exception as err:
-            print(f"[!] Sesión guardada no válida o expirada ({err}). Solicitando sessionid...")
+            print(f"[!] Sesión guardada no válida o expirada ({err}). Solicitando nuevo sessionid...")
 
-    # 2. Obtener sessionid de variable de entorno, archivo .sessionid o prompt interactivo oculto
-    session_id = os.getenv("IG_SESSIONID")
-    session_file_txt = Path(".sessionid")
-
-    if not session_id and session_file_txt.exists():
-        session_id = session_file_txt.read_text(encoding="utf-8").strip()
-
-    if not session_id:
+    # 3. Si no hay sesión válida ni nuevo sessionid, solicitar interactivamente
+    if not new_session_id:
         print("\nPara autenticarte de forma segura sin contraseña:")
         print("1. Abre Instagram en tu navegador habitual.")
         print("2. Abre DevTools (F12) -> Almacenamiento/Storage (o Aplicación) -> Cookies -> https://www.instagram.com")
         print("3. Copia el valor de la cookie 'sessionid'.")
-        session_id = getpass.getpass("\nPega tu cookie sessionid (la entrada no se mostrará en pantalla): ").strip()
+        new_session_id = getpass.getpass("\nPega tu cookie sessionid (la entrada no se mostrará en pantalla): ").strip()
 
-    if not session_id:
+    if not new_session_id:
         print("[-] Error: sessionid no proporcionado.")
         sys.exit(1)
 
     try:
         print("[*] Validando sessionid con Instagram...")
-        cl.login_by_sessionid(session_id)
+        cl.login_by_sessionid(new_session_id)
         cl.dump_settings(session_file)
         print(f"[+] Autenticación exitosa como @{cl.username} (ID: {cl.user_id}).")
-        print(f"[+] Sesión guardada en: {session_file.resolve()}")
         return cl
     except Exception as err:
         print(f"[-] Error al autenticar con sessionid: {err}")

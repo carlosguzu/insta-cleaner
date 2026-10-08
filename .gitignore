@@ -14,3 +14,5 @@ ig_session.json
 .sessionid
 .env
 *.txt
+*.csv
+*.json
